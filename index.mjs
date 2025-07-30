@@ -264,7 +264,7 @@ app.get('/health', (req, res) => {
 // Root route for basic server info
 app.get('/', (req, res) => {
   res.json({
-    message: 'Therapist AI Priya Backend Server',
+    message: 'Numa AI Therapist Backend Server',
     status: 'running',
     endpoints: [
       'POST /message - Send messages to AI therapist',

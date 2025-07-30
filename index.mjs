@@ -139,20 +139,40 @@ app.post('/message', async (req, res) => {
   let aiResponse = "I'm here to listen and support you.";
   let summary = "Session completed.";
   try {
-    const prompt = `You are Dr. Sarah, a caring therapist. Respond to Slow Drive's message, then write a gentle 1-2 sentence summary of the main issue and emotional progress.\n\nMessage: "${message}"`;
+    const prompt = `You are Dr. Sarah, a caring therapist. Keep your response brief and warm (2-3 sentences max). Respond to: "${message}"`;
     if (model) {
       const chat = model.startChat({
         history: history?.map(msg => ({ role: msg.role, parts: [{ text: msg.content }] })) || [],
-        generationConfig: { maxOutputTokens: 1024, temperature: 0.8, topK: 40, topP: 0.95 }
+        generationConfig: { 
+          maxOutputTokens: 256, 
+          temperature: 0.7, 
+          topK: 20, 
+          topP: 0.9,
+          candidateCount: 1
+        }
       });
-      const result = await chat.sendMessage(prompt);
+      
+      // Add timeout for faster response
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 15000)
+      );
+      
+      const result = await Promise.race([
+        chat.sendMessage(prompt),
+        timeoutPromise
+      ]);
+      
       const response = await result.response;
       const aiText = response.text();
       const parts = aiText.split('Summary:');
       aiResponse = parts[0].trim();
       summary = (parts[1] || '').trim();
     }
-  } catch (e) {}
+  } catch (e) {
+    console.error('AI response error:', e.message);
+    // Fallback to faster response
+    aiResponse = "I understand how you're feeling. Let's talk more about this together.";
+  }
 
   let journal = [];
   if (fs.existsSync(JOURNAL_PATH)) {

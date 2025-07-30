@@ -11,7 +11,14 @@ import { v4 as uuidv4 } from 'uuid';
 dotenv.config();
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: [
+    'https://your-vercel-app.vercel.app', // Replace with your Vercel URL
+    'https://harsh8864.github.io',
+    'http://localhost:3000'
+  ],
+  credentials: true
+}));
 app.use(bodyParser.json());
 
 const upload = multer({ dest: 'voice_uploads/' });

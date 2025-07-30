@@ -13,7 +13,8 @@ dotenv.config();
 const app = express();
 app.use(cors({
   origin: [
-    'https://your-vercel-app.vercel.app', // Replace with your Vercel URL
+    'https://slow-drive-ai-frontend-9aax.vercel.app',
+    'https://slow-drive-ai-frontend-9aax-nhiu6jzpi-lucks-projects-c713e61b.vercel.app',
     'https://harsh8864.github.io',
     'http://localhost:3000'
   ],

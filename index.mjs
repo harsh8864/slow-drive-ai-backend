@@ -139,37 +139,46 @@ app.post('/message', async (req, res) => {
   let aiResponse = "I'm here to listen and support you.";
   let summary = "Session completed.";
   try {
-    const prompt = `You are Dr. Sarah, a caring therapist. Keep your response brief and warm (2-3 sentences max). Respond to: "${message}"`;
+    const prompt = `You are Dr. Sarah, a caring therapist. Respond warmly and briefly to: "${message}"`;
     if (model) {
-      const chat = model.startChat({
-        history: history?.map(msg => ({ role: msg.role, parts: [{ text: msg.content }] })) || [],
-        generationConfig: { 
-          maxOutputTokens: 256, 
-          temperature: 0.7, 
-          topK: 20, 
-          topP: 0.9,
-          candidateCount: 1
-        }
-      });
-      
-      // Add timeout for faster response
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout')), 15000)
-      );
-      
-      const result = await Promise.race([
-        chat.sendMessage(prompt),
-        timeoutPromise
-      ]);
-      
-      const response = await result.response;
-      const aiText = response.text();
-      const parts = aiText.split('Summary:');
-      aiResponse = parts[0].trim();
-      summary = (parts[1] || '').trim();
+      try {
+        // Try simpler approach first
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const aiText = response.text();
+        aiResponse = aiText.trim();
+        summary = "Session completed.";
+      } catch (chatError) {
+        console.error('Simple AI call failed, trying chat:', chatError.message);
+        
+        // Fallback to chat approach
+        const chat = model.startChat({
+          generationConfig: { 
+            maxOutputTokens: 256, 
+            temperature: 0.7, 
+            topK: 20, 
+            topP: 0.9
+          }
+        });
+        
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout')), 10000)
+        );
+        
+        const result = await Promise.race([
+          chat.sendMessage(prompt),
+          timeoutPromise
+        ]);
+        
+        const response = await result.response;
+        const aiText = response.text();
+        aiResponse = aiText.trim();
+        summary = "Session completed.";
+      }
     }
   } catch (e) {
     console.error('AI response error:', e.message);
+    console.error('Error details:', e);
     // Fallback to faster response
     aiResponse = "I understand how you're feeling. Let's talk more about this together.";
   }

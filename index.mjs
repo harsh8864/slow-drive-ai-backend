@@ -28,7 +28,7 @@ const JOURNAL_PATH = './journal.json';
 const VOICE_MEMORIES_PATH = './voice_memories.json';
 const VOICE_UPLOADS_DIR = './voice_uploads/';
 
-const apiKey = process.env.GEMINI_API_KEY;
+const apiKey = process.env.GOOGLE_API_KEY;
 const ENCRYPTION_KEY = '8766023995'.padEnd(32, '0'); // 32 bytes for AES-256
 const IV = Buffer.alloc(16, 0); // Initialization vector
 

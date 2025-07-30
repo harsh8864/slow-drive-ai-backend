@@ -6,9 +6,6 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import crypto from 'crypto';
 import multer from 'multer';
-const upload = multer({ dest: 'voice_uploads/' });
-const VOICE_MEMORIES_PATH = './voice_memories.json';
-const VOICE_UPLOADS_DIR = './voice_uploads/';
 import { v4 as uuidv4 } from 'uuid';
 
 dotenv.config();
@@ -17,10 +14,18 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
+const upload = multer({ dest: 'voice_uploads/' });
+
+const JOURNAL_PATH = './journal.json';
+const VOICE_MEMORIES_PATH = './voice_memories.json';
+const VOICE_UPLOADS_DIR = './voice_uploads/';
+
 const apiKey = process.env.GEMINI_API_KEY;
 const ENCRYPTION_KEY = '8766023995'.padEnd(32, '0'); // 32 bytes for AES-256
 const IV = Buffer.alloc(16, 0); // Initialization vector
-const JOURNAL_PATH = './journal.json';
+
+// Ensure upload dir exists on Render
+if (!fs.existsSync(VOICE_UPLOADS_DIR)) fs.mkdirSync(VOICE_UPLOADS_DIR);
 
 function encrypt(text) {
   const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), IV);
@@ -28,6 +33,7 @@ function encrypt(text) {
   encrypted = Buffer.concat([encrypted, cipher.final()]);
   return encrypted.toString('hex');
 }
+
 function decrypt(text) {
   const encryptedText = Buffer.from(text, 'hex');
   const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), IV);
@@ -35,25 +41,26 @@ function decrypt(text) {
   decrypted = Buffer.concat([decrypted, decipher.final()]);
   return decrypted.toString();
 }
+
 function appendJournal(entry) {
   let journal = [];
   if (fs.existsSync(JOURNAL_PATH)) {
     try {
       const data = fs.readFileSync(JOURNAL_PATH, 'utf8');
       if (data) journal = JSON.parse(decrypt(data));
-    } catch (e) { journal = []; }
+    } catch (e) {}
   }
   journal.push(entry);
   fs.writeFileSync(JOURNAL_PATH, encrypt(JSON.stringify(journal)), 'utf8');
 }
 
-// Helper: Encrypt/decrypt audio files
 function encryptFile(inputPath, outputPath) {
   const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), IV);
   const input = fs.createReadStream(inputPath);
   const output = fs.createWriteStream(outputPath);
   input.pipe(cipher).pipe(output);
 }
+
 function decryptFile(inputPath, outputPath, cb) {
   const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), IV);
   const input = fs.createReadStream(inputPath);
@@ -82,25 +89,20 @@ const emergencyHelp = {
   calmingAudio: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'
 };
 
-// Helper: Check for crisis
 function isCrisis(message) {
   const lower = message.toLowerCase();
   return crisisPhrases.some(phrase => lower.includes(phrase));
 }
 
-// Helper: Should prompt gratitude (once a week or after tough session)
 function shouldPromptGratitude(journal) {
   if (!journal.length) return true;
   const last = journal[journal.length - 1];
   const lastDate = new Date(last.date);
   const now = new Date();
   const days = Math.floor((now - lastDate) / (1000 * 60 * 60 * 24));
-  if (days >= 7) return true;
-  // Or after a tough session (detected by negative mood)
-  return last.mood === 'sad' || last.mood === 'anxious';
+  return days >= 7 || ['sad', 'anxious'].includes(last.mood);
 }
 
-// Gemini API Setup
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 const model = genAI ? genAI.getGenerativeModel({ model: "gemini-1.5-flash" }) : null;
 
@@ -110,7 +112,6 @@ app.post('/message', async (req, res) => {
     return res.status(400).json({ response: "Please enter a message." });
   }
 
-  // Crisis detection
   if (isCrisis(message)) {
     appendJournal({
       date: new Date().toISOString(),
@@ -127,44 +128,32 @@ app.post('/message', async (req, res) => {
     });
   }
 
-  // Normal AI response
-  let aiResponse = '';
-  let summary = '';
-  let gratitudePrompt = false;
+  let aiResponse = "I'm here to listen and support you.";
+  let summary = "Session completed.";
   try {
-    let prompt = `You are Dr. Sarah, a caring therapist. Respond to Slow Drive's message, then write a gentle 1-2 sentence summary of the main issue and emotional progress. Example: 'Today, we talked about your fear of failure. You showed a lot of courage opening up. Remember, you are making progress.'\n\nMessage: "${message}"`;
-    const chat = model ? model.startChat({
-      history: history ? history.map(msg => ({ role: msg.role, parts: [{ text: msg.content }] })) : [],
-      generationConfig: { maxOutputTokens: 1024, temperature: 0.8, topK: 40, topP: 0.95 },
-    }) : null;
-    let aiText = '';
-    let aiSummary = '';
-    if (chat) {
+    const prompt = `You are Dr. Sarah, a caring therapist. Respond to Slow Drive's message, then write a gentle 1-2 sentence summary of the main issue and emotional progress.\n\nMessage: "${message}"`;
+    if (model) {
+      const chat = model.startChat({
+        history: history?.map(msg => ({ role: msg.role, parts: [{ text: msg.content }] })) || [],
+        generationConfig: { maxOutputTokens: 1024, temperature: 0.8, topK: 40, topP: 0.95 }
+      });
       const result = await chat.sendMessage(prompt);
       const response = await result.response;
-      aiText = response.text();
-      // Try to split summary from main response
+      const aiText = response.text();
       const parts = aiText.split('Summary:');
       aiResponse = parts[0].trim();
-      aiSummary = (parts[1] || '').trim();
-      summary = aiSummary || 'Session completed.';
-    } else {
-      aiResponse = "I'm here to listen and support you.";
-      summary = "Session completed.";
+      summary = (parts[1] || '').trim();
     }
-  } catch (e) {
-    aiResponse = "I'm here to listen and support you.";
-    summary = "Session completed.";
-  }
+  } catch (e) {}
 
-  // Append to journal
   let journal = [];
   if (fs.existsSync(JOURNAL_PATH)) {
     try {
       const data = fs.readFileSync(JOURNAL_PATH, 'utf8');
       if (data) journal = JSON.parse(decrypt(data));
-    } catch (e) { journal = []; }
+    } catch (e) {}
   }
+
   appendJournal({
     date: new Date().toISOString(),
     summary,
@@ -173,17 +162,10 @@ app.post('/message', async (req, res) => {
     type: 'session'
   });
 
-  // Gratitude prompt logic
-  gratitudePrompt = shouldPromptGratitude(journal);
-
-  res.json({
-    response: aiResponse,
-    summary,
-    gratitudePrompt
-  });
+  const gratitudePrompt = shouldPromptGratitude(journal);
+  res.json({ response: aiResponse, summary, gratitudePrompt });
 });
 
-// POST /voice-memories (upload)
 app.post('/voice-memories', upload.single('voiceNote'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   const id = uuidv4();
@@ -191,21 +173,19 @@ app.post('/voice-memories', upload.single('voiceNote'), (req, res) => {
   const label = req.body.label || '';
   const encPath = `${VOICE_UPLOADS_DIR}${id}.enc`;
   encryptFile(req.file.path, encPath);
-  fs.unlinkSync(req.file.path); // Remove original
-  // Save metadata
+  fs.unlinkSync(req.file.path);
   let meta = [];
   if (fs.existsSync(VOICE_MEMORIES_PATH)) {
     try {
       const data = fs.readFileSync(VOICE_MEMORIES_PATH, 'utf8');
       if (data) meta = JSON.parse(decrypt(data));
-    } catch (e) { meta = []; }
+    } catch (e) {}
   }
   meta.push({ id, date, label });
   fs.writeFileSync(VOICE_MEMORIES_PATH, encrypt(JSON.stringify(meta)), 'utf8');
   res.json({ success: true });
 });
 
-// GET /voice-memories (list)
 app.get('/voice-memories', (req, res) => {
   if (!fs.existsSync(VOICE_MEMORIES_PATH)) return res.json([]);
   try {
@@ -218,20 +198,16 @@ app.get('/voice-memories', (req, res) => {
   }
 });
 
-// GET /voice-memories/:id (download/decrypt)
 app.get('/voice-memories/:id', (req, res) => {
   const { id } = req.params;
   const encPath = `${VOICE_UPLOADS_DIR}${id}.enc`;
   if (!fs.existsSync(encPath)) return res.status(404).json({ error: 'Not found' });
   const tmpPath = `${VOICE_UPLOADS_DIR}${id}_tmp.webm`;
   decryptFile(encPath, tmpPath, () => {
-    res.sendFile(tmpPath, { root: '.' }, (err) => {
-      fs.unlinkSync(tmpPath);
-    });
+    res.sendFile(tmpPath, { root: '.' }, () => fs.unlinkSync(tmpPath));
   });
 });
 
-// Endpoint to get decrypted journal
 app.get('/journal', (req, res) => {
   if (!fs.existsSync(JOURNAL_PATH)) return res.json([]);
   try {
@@ -244,15 +220,28 @@ app.get('/journal', (req, res) => {
   }
 });
 
-// Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', apiKeyConfigured: !!apiKey });
+});
+
+// Root route for basic server info
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Therapist AI Priya Backend Server',
+    status: 'running',
+    endpoints: [
+      'POST /message - Send messages to AI therapist',
+      'POST /voice-memories - Upload voice notes',
+      'GET /voice-memories - Get list of voice memories',
+      'GET /voice-memories/:id - Get specific voice memory',
+      'GET /journal - Get journal entries',
+      'GET /health - Health check'
+    ],
+    apiKeyConfigured: !!apiKey
+  });
 });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
-  if (!apiKey || apiKey === 'your_gemini_api_key_here') {
-    console.log('⚠️  Running in demo mode - create .env file with GEMINI_API_KEY for full functionality');
-  }
 });
